@@ -1,0 +1,553 @@
+diff --git a/src/dexhand_manus.cpp b/src/dexhand_manus.cpp
+index 789c6d5..fe97c45 100644
+--- a/src/dexhand_manus.cpp
++++ b/src/dexhand_manus.cpp
+@@ -20,7 +20,6 @@
+ #include <thread>
+ #include <map>
+ 
+-
+ // Needed for isKeyPressed
+ #include <unistd.h>
+ #include <termios.h>
+@@ -32,7 +31,10 @@ using namespace std;
+ static const int NUM_FINGERS_ON_HAND = 5;
+ 
+ // Global for now to pass joint data between the Manus SDK and ROS2
+-float g_euler_joint[24][3] = {0.0};
++// Keep legacy buffer for LEFT (to preserve old helpers like print_joint).
++float g_euler_joint[24][3]       = {0.0};  // legacy (left)
++float g_euler_joint_left[24][3]  = {0.0};
++float g_euler_joint_right[24][3] = {0.0};
+ 
+ bool KeyDown();
+ 
+@@ -54,33 +56,72 @@ class JointLimits
+ 		float max;
+ };
+ 
+-// Ultimately, we would want to load these Joint Limits from the URDF or a configuration file
+-// but for now, we will include these in a table here. 
++// ---- Allegro Hand limits (LEFT hand: la_*) ----
+ std::map<std::string, JointLimits> joint_limits = {
+-	{"wrist_pitch_lower", JointLimits(-0.52, 0.52)},
+-	{"wrist_pitch_upper", JointLimits(-0.349, 0.349)},
+-	{"wrist_yaw", JointLimits(-0.436, 0.436)},
+-	{"index_yaw", JointLimits(-0.349, 0.349)},
+-	{"middle_yaw", JointLimits(-0.349, 0.349)},
+-	{"ring_yaw", JointLimits(-0.349, 0.349)},
+-	{"pinky_yaw", JointLimits(-0.349, 0.349)},
+-	{"index_pitch", JointLimits(0, 1.05)},
+-	{"index_knuckle", JointLimits(0, 0.785)},
+-	{"index_tip", JointLimits(0, 0.785)},
+-	{"middle_pitch", JointLimits(0, 1.05)},
+-	{"middle_knuckle", JointLimits(0, 0.785)},
+-	{"middle_tip", JointLimits(0, 0.785)},
+-	{"ring_pitch", JointLimits(0, 1.05)},
+-	{"ring_knuckle", JointLimits(0, 0.785)},
+-	{"ring_tip", JointLimits(0, 0.785)},
+-	{"pinky_pitch", JointLimits(0, 1.05)},
+-	{"pinky_knuckle", JointLimits(0, 0.785)},
+-	{"pinky_tip", JointLimits(0, 0.785)},
+-	{"thumb_yaw", JointLimits(0, 0.872)},
+-	{"thumb_roll", JointLimits(0, 0.349)},
+-	{"thumb_pitch", JointLimits(0, 1.047)},
+-	{"thumb_knuckle", JointLimits(0, 0.785)},
+-	{"thumb_tip", JointLimits(0, 0.785)}
++	{"la_wrist_pitch_lower", JointLimits(-0.52, 0.52)},
++	{"la_wrist_pitch_upper", JointLimits(-0.349, 0.349)},
++	{"la_wrist_yaw",         JointLimits(-0.436, 0.436)},
++
++	{"la_index_yaw",    JointLimits(-0.57, 0.57)},
++	{"la_middle_yaw",   JointLimits(-0.57, 0.57)},
++	{"la_ring_yaw",     JointLimits(-0.57, 0.57)},
++	{"la_pinky_yaw",    JointLimits(-0.57, 0.57)},
++
++	{"la_index_pitch",   JointLimits(-0.296, 1.71)},
++	{"la_index_knuckle", JointLimits(-0.274, 1.809)},
++	{"la_index_tip",     JointLimits(-0.327, 1.718)},
++
++	{"la_middle_pitch",   JointLimits(0.296, 1.71)},
++	{"la_middle_knuckle", JointLimits(-0.274, 1.809)},
++	{"la_middle_tip",     JointLimits(-0.327, 1.718)},
++
++	{"la_ring_pitch",   JointLimits(0.296, 1.71)},
++	{"la_ring_knuckle", JointLimits(-0.274, 1.809)},
++	{"la_ring_tip",     JointLimits(-0.327, 1.718)},
++
++	{"la_pinky_pitch",   JointLimits(0.296, 1.71)},
++	{"la_pinky_knuckle", JointLimits(-0.274, 1.809)},
++	{"la_pinky_tip",     JointLimits(-0.327, 1.718)},
++
++	{"la_thumb_yaw",     JointLimits(0.36, 1.496)},
++	{"la_thumb_roll",    JointLimits(0, 0.349)},
++	{"la_thumb_pitch",   JointLimits(-0.204, 1.263)},
++	{"la_thumb_knuckle", JointLimits(-0.289, 1.744)},
++	{"la_thumb_tip",     JointLimits(-0.26, 1.819)}
++};
++
++// ---- Allegro Hand limits (RIGHT hand: ra_* ; mirrored set) ----
++std::map<std::string, JointLimits> joint_limits_right = {
++	{"ra_wrist_pitch_lower", JointLimits(-0.52, 0.52)},
++	{"ra_wrist_pitch_upper", JointLimits(-0.349, 0.349)},
++	{"ra_wrist_yaw",         JointLimits(-0.436, 0.436)},
++
++	{"ra_index_yaw",    JointLimits(-0.57, 0.57)},
++	{"ra_middle_yaw",   JointLimits(-0.57, 0.57)},
++	{"ra_ring_yaw",     JointLimits(-0.57, 0.57)},
++	{"ra_pinky_yaw",    JointLimits(-0.57, 0.57)},
++
++	{"ra_index_pitch",   JointLimits(-0.296, 1.71)},
++	{"ra_index_knuckle", JointLimits(-0.274, 1.809)},
++	{"ra_index_tip",     JointLimits(-0.327, 1.718)},
++
++	{"ra_middle_pitch",   JointLimits(0.296, 1.71)},
++	{"ra_middle_knuckle", JointLimits(-0.274, 1.809)},
++	{"ra_middle_tip",     JointLimits(-0.327, 1.718)},
++
++	{"ra_ring_pitch",   JointLimits(0.296, 1.71)},
++	{"ra_ring_knuckle", JointLimits(-0.274, 1.809)},
++	{"ra_ring_tip",     JointLimits(-0.327, 1.718)},
++
++	{"ra_pinky_pitch",   JointLimits(0.296, 1.71)},
++	{"ra_pinky_knuckle", JointLimits(-0.274, 1.809)},
++	{"ra_pinky_tip",     JointLimits(-0.327, 1.718)},
++
++	{"ra_thumb_yaw",     JointLimits(0.36, 1.496)},
++	{"ra_thumb_roll",    JointLimits(0, 0.349)},
++	{"ra_thumb_pitch",   JointLimits(-0.204, 1.263)},
++	{"ra_thumb_knuckle", JointLimits(-0.289, 1.744)},
++	{"ra_thumb_tip",     JointLimits(-0.26, 1.819)}
+ };
+ 
+ /// @brief ROS2 publisher class for the manus_ros2 node
+@@ -91,30 +132,33 @@ public:
+ 	{
+ 		RCLCPP_INFO(this->get_logger(), "DexhandManus node started");
+ 
+-		publisher_ = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
++		// Left publisher preserved name/topic as in your baseline
++		publisher_        = this->create_publisher<sensor_msgs::msg::JointState>("la_dex_joint_states", 10);
++		// New right-hand publisher/topic
++		right_publisher_  = this->create_publisher<sensor_msgs::msg::JointState>("ra_dex_joint_states", 10);
+ 
+-		manus_left_listener_ = this->create_subscription<geometry_msgs::msg::PoseArray>("manus_left", 10, std::bind(&DexHandManus::manus_left_callback, this, std::placeholders::_1));
+-		manus_right_listener_ = this->create_subscription<geometry_msgs::msg::PoseArray>("manus_right", 10, std::bind(&DexHandManus::manus_right_callback, this, std::placeholders::_1));
++		manus_left_listener_  = this->create_subscription<geometry_msgs::msg::PoseArray>(
++			"manus_left", 10, std::bind(&DexHandManus::manus_left_callback,  this, std::placeholders::_1));
++		manus_right_listener_ = this->create_subscription<geometry_msgs::msg::PoseArray>(
++			"manus_right", 10, std::bind(&DexHandManus::manus_right_callback, this, std::placeholders::_1));
+ 
+ 		command_subscriber_ = this->create_subscription<std_msgs::msg::String>(
+ 			"dexhand_manus_cmd", 10, std::bind(&DexHandManus::command_callback, this, std::placeholders::_1));
+ 
+-
+ 		// Start a timer to publish default joint states until we get a message
+ 		default_timer_ = this->create_wall_timer(10ms, std::bind(&DexHandManus::publish_joint_states, this));
+-
+-		
+     }
+ 
+ 	// print_joint - prints global joint data from Manus Hand after transform
++	// (kept exactly; prints LEFT legacy buffer)
+ 	void print_joint(int joint)
+ 	{
+-    RCLCPP_INFO_STREAM(this->get_logger(), 
+-		  std::fixed << std::setprecision(5) << "Joint: " << joint << " " 
+-        << (g_euler_joint[joint][0] >= 0 ? " " : "") << g_euler_joint[joint][0] << " " 
+-        << (g_euler_joint[joint][1] >= 0 ? " " : "") << g_euler_joint[joint][1] << " " 
+-        << (g_euler_joint[joint][2] >= 0 ? " " : "") << g_euler_joint[joint][2] << " "
+-			  << "\n");
++		RCLCPP_INFO_STREAM(this->get_logger(), 
++			std::fixed << std::setprecision(5) << "Joint: " << joint << " " 
++			<< (g_euler_joint[joint][0] >= 0 ? " " : "") << g_euler_joint[joint][0] << " " 
++			<< (g_euler_joint[joint][1] >= 0 ? " " : "") << g_euler_joint[joint][1] << " " 
++			<< (g_euler_joint[joint][2] >= 0 ? " " : "") << g_euler_joint[joint][2] << " "
++			<< "\n");
+ 	}
+ 
+ private:
+@@ -126,14 +170,13 @@ private:
+ 			default_timer_->cancel();
+ 			default_timer_ = nullptr;
+ 		}
+-		
+ 	}
+ 
+ 	// manus_left_callback - callback for the left manus glove
+ 	void manus_left_callback(const geometry_msgs::msg::PoseArray::SharedPtr msg)
+ 	{
+ 		cancel_default_timer();
+-		processPose(msg);
++		processPose(msg, /*is_left=*/true);
+ 		RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Receiving Manus Left Data");
+ 	}
+ 
+@@ -141,166 +184,230 @@ private:
+ 	void manus_right_callback(const geometry_msgs::msg::PoseArray::SharedPtr msg)
+ 	{
+ 		cancel_default_timer();
+-
+-		processPose(msg);
++		processPose(msg, /*is_left=*/false);
+ 		RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Receiving Manus Right Data");
+ 	}
+ 
+ 	// command_callback - callback for the command subscriber
+ 	void command_callback(const std_msgs::msg::String::SharedPtr msg)
+ 	{
+-		if (msg->data == "reset_origin")
++		if (msg->data == "reset_origin" || msg->data == "reset_origin_left")
++		{
++			initialized_left_ = false;
++			RCLCPP_INFO(this->get_logger(), "Resetting LEFT wrist position to center");
++		}
++		if (msg->data == "reset_origin" || msg->data == "reset_origin_right")
+ 		{
+-			// Reset the wrist position to center
+-			initialized = false;
+-			RCLCPP_INFO(this->get_logger(), "Resetting wrist position to center");
++			initialized_right_ = false;
++			RCLCPP_INFO(this->get_logger(), "Resetting RIGHT wrist position to center");
+ 		}
+-		else
++		if (msg->data != "reset_origin" && msg->data != "reset_origin_left" && msg->data != "reset_origin_right")
+ 		{
+ 			RCLCPP_INFO_STREAM(this->get_logger(), "Unknown command received:" << msg->data << "\n");
+ 		}
+ 	}
+ 
+ 	// Publishes the joint states to the ROS2 network
++	// (Publishes BOTH left and right; preserves this function name/signature)
+ 	void publish_joint_states()
+ 	{
+-		auto joint_state = sensor_msgs::msg::JointState();
+-
+-		joint_state.name.push_back("wrist_pitch_lower");
+-		joint_state.name.push_back("wrist_pitch_upper");
+-		joint_state.name.push_back("wrist_yaw");
+-		joint_state.name.push_back("index_yaw");
+-		joint_state.name.push_back("middle_yaw");
+-		joint_state.name.push_back("ring_yaw");
+-		joint_state.name.push_back("pinky_yaw");
+-		joint_state.name.push_back("index_pitch");
+-		joint_state.name.push_back("index_knuckle");
+-		joint_state.name.push_back("index_tip");
+-		joint_state.name.push_back("middle_pitch");
+-		joint_state.name.push_back("middle_knuckle");
+-		joint_state.name.push_back("middle_tip");
+-		joint_state.name.push_back("ring_pitch");
+-		joint_state.name.push_back("ring_knuckle");
+-		joint_state.name.push_back("ring_tip");
+-		joint_state.name.push_back("pinky_pitch");
+-		joint_state.name.push_back("pinky_knuckle");
+-		joint_state.name.push_back("pinky_tip");
+-		joint_state.name.push_back("thumb_yaw");
+-		joint_state.name.push_back("thumb_roll");
+-		joint_state.name.push_back("thumb_pitch");
+-		joint_state.name.push_back("thumb_knuckle");
+-		joint_state.name.push_back("thumb_tip");
+-
+-		//const std::string t_FingerNames[NUM_FINGERS_ON_HAND] = {"[thumb] ", "[index] ", "[middle]", "[ring]  ", "[pinky] "};
+-		//const std::string t_FingerJointNames[NUM_FINGERS_ON_HAND] = {"mcp", "pip", "dip"};
+-		//const std::string t_ThumbJointNames[NUM_FINGERS_ON_HAND] = {"cmc", "mcp", "ip "};
+-
+-		// Wrist pitch is spread across two joints
+-
+-		joint_state.position.push_back(joint_limits.at("wrist_pitch_lower").apply(-g_euler_joint[0][1]/2)); // "wrist_pitch_lower"
+-		joint_state.position.push_back(joint_limits.at("wrist_pitch_upper").apply(-g_euler_joint[0][1]/2)); // "wrist_pitch_upper"
+-
+-		joint_state.position.push_back(joint_limits.at("wrist_yaw").apply(g_euler_joint[0][2]));  // "wrist_yaw"
+-		joint_state.position.push_back(joint_limits.at("index_yaw").apply(g_euler_joint[5][2]));  // "index_yaw"
+-		joint_state.position.push_back(joint_limits.at("middle_yaw").apply(g_euler_joint[9][2]));  // "middle_yaw"
+-		joint_state.position.push_back(joint_limits.at("ring_yaw").apply(g_euler_joint[13][2])); // "ring_yaw"
+-		joint_state.position.push_back(joint_limits.at("pinky_yaw").apply(g_euler_joint[17][2])); // "pinky_yaw"
+-		joint_state.position.push_back(joint_limits.at("index_pitch").apply(g_euler_joint[5][1]));  // "index_pitch"
+-		joint_state.position.push_back(joint_limits.at("index_knuckle").apply(g_euler_joint[6][1]));  // "index_knuckle"
+-		joint_state.position.push_back(joint_limits.at("index_tip").apply(g_euler_joint[7][1]));  // "index_tip"
+-		joint_state.position.push_back(joint_limits.at("middle_pitch").apply(g_euler_joint[9][1]));  // "middle_pitch"
+-		joint_state.position.push_back(joint_limits.at("middle_knuckle").apply(g_euler_joint[10][1])); // "middle_knuckle"
+-		joint_state.position.push_back(joint_limits.at("middle_tip").apply(g_euler_joint[11][1])); // "middle_tip"
+-		joint_state.position.push_back(joint_limits.at("ring_pitch").apply(g_euler_joint[13][1])); // "ring_pitch"
+-		joint_state.position.push_back(joint_limits.at("ring_knuckle").apply(g_euler_joint[14][1])); // "ring_knuckle"
+-		joint_state.position.push_back(joint_limits.at("ring_tip").apply(g_euler_joint[15][1])); // "ring_tip"
+-		joint_state.position.push_back(joint_limits.at("pinky_pitch").apply(g_euler_joint[17][1])); // "pinky_pitch"
+-		joint_state.position.push_back(joint_limits.at("pinky_knuckle").apply(g_euler_joint[18][1])); // "pinky_knuckle"
+-		joint_state.position.push_back(joint_limits.at("pinky_tip").apply(g_euler_joint[19][1])); // "pinky_tip"
+-		joint_state.position.push_back(joint_limits.at("thumb_yaw").apply(g_euler_joint[1][1]*2.0));  // "thumb_yaw"
+-		joint_state.position.push_back(joint_limits.at("thumb_roll").apply(-g_euler_joint[1][0]));  // "thumb_roll"
+-		joint_state.position.push_back(joint_limits.at("thumb_pitch").apply(-g_euler_joint[1][2]*2.0));  // "thumb_pitch"
+-		joint_state.position.push_back(joint_limits.at("thumb_knuckle").apply(-g_euler_joint[2][2])); // "thumb_knuckle"
+-		joint_state.position.push_back(joint_limits.at("thumb_tip").apply(-g_euler_joint[3][2])); // "thumb_tip"
+-
+-		// Set timestamp to current ROS time
+-		joint_state.header.stamp = this->now();
+-
+-		// Command the robot to move
+-		publisher_->publish(joint_state);
++		// ------------ LEFT ------------
++		{
++			auto joint_state = sensor_msgs::msg::JointState();
++
++			joint_state.name.push_back("la_wrist_pitch_lower");
++			joint_state.name.push_back("la_wrist_pitch_upper");
++			joint_state.name.push_back("la_wrist_yaw");
++			joint_state.name.push_back("la_index_yaw");
++			joint_state.name.push_back("la_middle_yaw");
++			joint_state.name.push_back("la_ring_yaw");
++			joint_state.name.push_back("la_pinky_yaw");
++			joint_state.name.push_back("la_index_pitch");
++			joint_state.name.push_back("la_index_knuckle");
++			joint_state.name.push_back("la_index_tip");
++			joint_state.name.push_back("la_middle_pitch");
++			joint_state.name.push_back("la_middle_knuckle");
++			joint_state.name.push_back("la_middle_tip");
++			joint_state.name.push_back("la_ring_pitch");
++			joint_state.name.push_back("la_ring_knuckle");
++			joint_state.name.push_back("la_ring_tip");
++			joint_state.name.push_back("la_pinky_pitch");
++			joint_state.name.push_back("la_pinky_knuckle");
++			joint_state.name.push_back("la_pinky_tip");
++			joint_state.name.push_back("la_thumb_yaw");
++			joint_state.name.push_back("la_thumb_roll");
++			joint_state.name.push_back("la_thumb_pitch");
++			joint_state.name.push_back("la_thumb_knuckle");
++			joint_state.name.push_back("la_thumb_tip");
++
++			// Wrist pitch is spread across two joints
++			joint_state.position.push_back(joint_limits.at("la_wrist_pitch_lower").apply(-g_euler_joint_left[0][1]/2));
++			joint_state.position.push_back(joint_limits.at("la_wrist_pitch_upper").apply(-g_euler_joint_left[0][1]/2));
++
++			joint_state.position.push_back(joint_limits.at("la_wrist_yaw").apply(g_euler_joint_left[0][2]));
++			joint_state.position.push_back(joint_limits.at("la_index_yaw").apply(g_euler_joint_left[5][2]));
++			joint_state.position.push_back(joint_limits.at("la_middle_yaw").apply(g_euler_joint_left[9][2]));
++			joint_state.position.push_back(joint_limits.at("la_ring_yaw").apply(g_euler_joint_left[13][2]));
++			joint_state.position.push_back(joint_limits.at("la_pinky_yaw").apply(g_euler_joint_left[17][2]));
++			joint_state.position.push_back(joint_limits.at("la_index_pitch").apply(g_euler_joint_left[5][1]));
++			joint_state.position.push_back(joint_limits.at("la_index_knuckle").apply(g_euler_joint_left[6][1]));
++			joint_state.position.push_back(joint_limits.at("la_index_tip").apply(g_euler_joint_left[7][1]));
++			joint_state.position.push_back(joint_limits.at("la_middle_pitch").apply(g_euler_joint_left[9][1]));
++			joint_state.position.push_back(joint_limits.at("la_middle_knuckle").apply(g_euler_joint_left[10][1]));
++			joint_state.position.push_back(joint_limits.at("la_middle_tip").apply(g_euler_joint_left[11][1]));
++			joint_state.position.push_back(joint_limits.at("la_ring_pitch").apply(g_euler_joint_left[13][1]));
++			joint_state.position.push_back(joint_limits.at("la_ring_knuckle").apply(g_euler_joint_left[14][1]));
++			joint_state.position.push_back(joint_limits.at("la_ring_tip").apply(g_euler_joint_left[15][1]));
++			joint_state.position.push_back(joint_limits.at("la_pinky_pitch").apply(g_euler_joint_left[17][1]));
++			joint_state.position.push_back(joint_limits.at("la_pinky_knuckle").apply(g_euler_joint_left[18][1]));
++			joint_state.position.push_back(joint_limits.at("la_pinky_tip").apply(g_euler_joint_left[19][1]));
++			joint_state.position.push_back(joint_limits.at("la_thumb_yaw").apply(g_euler_joint_left[1][1]*2.0));
++			joint_state.position.push_back(joint_limits.at("la_thumb_roll").apply(-g_euler_joint_left[1][0]));
++			joint_state.position.push_back(joint_limits.at("la_thumb_pitch").apply(-g_euler_joint_left[1][2]*2.0));
++			joint_state.position.push_back(joint_limits.at("la_thumb_knuckle").apply(-g_euler_joint_left[2][2]));
++			joint_state.position.push_back(joint_limits.at("la_thumb_tip").apply(-g_euler_joint_left[3][2]));
++
++			// Set timestamp to current ROS time
++			joint_state.header.stamp = this->now();
++			// Publish LEFT
++			publisher_->publish(joint_state);
++		}
++
++		// ------------ RIGHT ------------
++		{
++			auto joint_state = sensor_msgs::msg::JointState();
++
++			joint_state.name.push_back("ra_wrist_pitch_lower");
++			joint_state.name.push_back("ra_wrist_pitch_upper");
++			joint_state.name.push_back("ra_wrist_yaw");
++			joint_state.name.push_back("ra_index_yaw");
++			joint_state.name.push_back("ra_middle_yaw");
++			joint_state.name.push_back("ra_ring_yaw");
++			joint_state.name.push_back("ra_pinky_yaw");
++			joint_state.name.push_back("ra_index_pitch");
++			joint_state.name.push_back("ra_index_knuckle");
++			joint_state.name.push_back("ra_index_tip");
++			joint_state.name.push_back("ra_middle_pitch");
++			joint_state.name.push_back("ra_middle_knuckle");
++			joint_state.name.push_back("ra_middle_tip");
++			joint_state.name.push_back("ra_ring_pitch");
++			joint_state.name.push_back("ra_ring_knuckle");
++			joint_state.name.push_back("ra_ring_tip");
++			joint_state.name.push_back("ra_pinky_pitch");
++			joint_state.name.push_back("ra_pinky_knuckle");
++			joint_state.name.push_back("ra_pinky_tip");
++			joint_state.name.push_back("ra_thumb_yaw");
++			joint_state.name.push_back("ra_thumb_roll");
++			joint_state.name.push_back("ra_thumb_pitch");
++			joint_state.name.push_back("ra_thumb_knuckle");
++			joint_state.name.push_back("ra_thumb_tip");
++
++			// Wrist pitch is spread across two joints
++			joint_state.position.push_back(joint_limits_right.at("ra_wrist_pitch_lower").apply(-g_euler_joint_right[0][1]/2));
++			joint_state.position.push_back(joint_limits_right.at("ra_wrist_pitch_upper").apply(-g_euler_joint_right[0][1]/2));
++
++			joint_state.position.push_back(joint_limits_right.at("ra_wrist_yaw").apply(g_euler_joint_right[0][2]));
++			joint_state.position.push_back(joint_limits_right.at("ra_index_yaw").apply(g_euler_joint_right[5][2]));
++			joint_state.position.push_back(joint_limits_right.at("ra_middle_yaw").apply(g_euler_joint_right[9][2]));
++			joint_state.position.push_back(joint_limits_right.at("ra_ring_yaw").apply(g_euler_joint_right[13][2]));
++			joint_state.position.push_back(joint_limits_right.at("ra_pinky_yaw").apply(g_euler_joint_right[17][2]));
++			joint_state.position.push_back(joint_limits_right.at("ra_index_pitch").apply(g_euler_joint_right[5][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_index_knuckle").apply(g_euler_joint_right[6][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_index_tip").apply(g_euler_joint_right[7][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_middle_pitch").apply(g_euler_joint_right[9][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_middle_knuckle").apply(g_euler_joint_right[10][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_middle_tip").apply(g_euler_joint_right[11][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_ring_pitch").apply(g_euler_joint_right[13][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_ring_knuckle").apply(g_euler_joint_right[14][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_ring_tip").apply(g_euler_joint_right[15][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_pinky_pitch").apply(g_euler_joint_right[17][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_pinky_knuckle").apply(g_euler_joint_right[18][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_pinky_tip").apply(g_euler_joint_right[19][1]));
++			joint_state.position.push_back(joint_limits_right.at("ra_thumb_yaw").apply(g_euler_joint_right[1][1]*2.0));
++			joint_state.position.push_back(joint_limits_right.at("ra_thumb_roll").apply(-g_euler_joint_right[1][0]));
++			joint_state.position.push_back(joint_limits_right.at("ra_thumb_pitch").apply(-g_euler_joint_right[1][2]*2.0));
++			joint_state.position.push_back(joint_limits_right.at("ra_thumb_knuckle").apply(-g_euler_joint_right[2][2]));
++			joint_state.position.push_back(joint_limits_right.at("ra_thumb_tip").apply(-g_euler_joint_right[3][2]));
++
++			// Set timestamp to current ROS time
++			joint_state.header.stamp = this->now();
++			// Publish RIGHT
++			right_publisher_->publish(joint_state);
++		}
+ 	}
+ 
+-	void processPose(const geometry_msgs::msg::PoseArray::SharedPtr msg) {
++	// Overload that keeps the original name but routes data to the correct hand
++	void processPose(const geometry_msgs::msg::PoseArray::SharedPtr msg, bool is_left) {
+ 		double roll, pitch, yaw;
+-		
+-		// Initialize with identity quaternion
+-		static tf2::Quaternion referenceRotation(1.0, 0.0, 0.0, 0.0);
+-		
+-		// Put the skeleton data in the bridge structure
+-		for (uint32_t i = 0; i < msg->poses.size(); i++) {
+ 
++		// Per-hand reference (for wrist delta/origin)
++		static tf2::Quaternion referenceRotationLeft(1.0, 0.0, 0.0, 0.0);
++		static tf2::Quaternion referenceRotationRight(1.0, 0.0, 0.0, 0.0);
++
++		tf2::Quaternion &referenceRotation = is_left ? referenceRotationLeft : referenceRotationRight;
++		bool &hand_initialized = is_left ? initialized_left_ : initialized_right_;
++		float (*buf)[3] = is_left ? g_euler_joint_left : g_euler_joint_right;
++
++		for (uint32_t i = 0; i < msg->poses.size() && i < 24; i++) {
+ 			const auto &joint = msg->poses[i];
+ 
+-			// Calculate delta rotation only for the wrist (joint 0)
+ 			if (i == 0) {
+-				if (!initialized) {
+-					// Store the current orientation
++				if (!hand_initialized) {
+ 					referenceRotation = tf2::Quaternion(joint.orientation.x, joint.orientation.y, joint.orientation.z, joint.orientation.w);
+-					initialized = true;
++					hand_initialized = true;
+ 				}
+-				else if (KeyDown()) {	
++				else if (KeyDown()) {
++					// allow reset via keyboard
++					hand_initialized = false;
++					// legacy flag maintained for compatibility
+ 					initialized = false;
+ 				}
+ 
+-				// Calculate the inverse of the reference rotation
+ 				tf2::Quaternion referenceRotationInverse = referenceRotation.inverse();
+-				
+-				// Calculate the delta rotation
+-				tf2::Quaternion newRotationInverse = referenceRotationInverse * tf2::Quaternion(joint.orientation.x, joint.orientation.y, joint.orientation.z, joint.orientation.w);
+-				
+-				// Convert the delta rotation to Euler angles
+-				tf2::Matrix3x3(newRotationInverse).getRPY(roll, pitch, yaw);
+-
+-				// Assign roll, pitch, and yaw directly to g_dexhand_joint
+-				g_euler_joint[i][0] = roll;
+-				g_euler_joint[i][1] = pitch;
+-				g_euler_joint[i][2] = yaw;
++				tf2::Quaternion delta = referenceRotationInverse *
++					tf2::Quaternion(joint.orientation.x, joint.orientation.y, joint.orientation.z, joint.orientation.w);
++
++				tf2::Matrix3x3(delta).getRPY(roll, pitch, yaw);
++
++				buf[i][0] = roll; buf[i][1] = pitch; buf[i][2] = yaw;
++
++				// keep legacy buffer mirrored to LEFT for compatibility (print_joint, etc.)
++				if (is_left) {
++					g_euler_joint[i][0] = roll; g_euler_joint[i][1] = pitch; g_euler_joint[i][2] = yaw;
++				}
+ 			}
+ 			else {
+-				// For child joints, perform regular quaternion to Euler angle conversion
+-				tf2::Quaternion quaternion(joint.orientation.x, joint.orientation.y, joint.orientation.z, joint.orientation.w);
+-				tf2::Matrix3x3(quaternion).getRPY(roll, pitch, yaw);
+-				
+-				// Assign roll, pitch, and yaw directly to g_dexhand_joint
+-				g_euler_joint[i][0] = roll;
+-				g_euler_joint[i][1] = pitch;
+-				g_euler_joint[i][2] = yaw;
+-			}
+-		}
++				tf2::Quaternion q(joint.orientation.x, joint.orientation.y, joint.orientation.z, joint.orientation.w);
++				tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+ 
+-	#if DEBUG_PRINT
+-			std::cout << "Node: " << i << " Rotation X, Y, Z, W "
+-					<< joint.transform.rotation.x << ", "
+-					<< joint.transform.rotation.y << ", "
+-					<< joint.transform.rotation.z << ", "
+-					<< joint.transform.rotation.w << ")" << std::endl;
++				buf[i][0] = roll; buf[i][1] = pitch; buf[i][2] = yaw;
+ 
+-			// Print Euler angles
+-			std::cout << "Node: " << i << " Roll, Pitch, Yaw: "
+-					<< roll << ", " << pitch << ", " << yaw << std::endl;
+-	#endif
++				if (is_left) {
++					g_euler_joint[i][0] = roll; g_euler_joint[i][1] = pitch; g_euler_joint[i][2] = yaw;
++				}
++			}
++		}
+ 
+-		// Publish the joint states
++		// Publish both streams (keeps consumers alive on both sides)
+ 		publish_joint_states();
+ 	}
+ 
+-	rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr publisher_;
++	// Original signature kept for compatibility; routes to LEFT by default
++	void processPose(const geometry_msgs::msg::PoseArray::SharedPtr msg) {
++		processPose(msg, /*is_left=*/true);
++	}
++
++	rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr publisher_;        // left
++	rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr right_publisher_;  // right
+ 	rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr manus_left_listener_;
+ 	rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr manus_right_listener_;
+ 	rclcpp::Subscription<std_msgs::msg::String>::SharedPtr command_subscriber_;
+ 	rclcpp::TimerBase::SharedPtr default_timer_;
+ 
+-	bool initialized = false;
++	// Kept legacy flag; per-hand flags added
++	bool initialized = false;          // legacy (left)
++	bool initialized_left_  = false;   // new
++	bool initialized_right_ = false;   // new
+ };
+ 
+ 
+@@ -343,11 +450,6 @@ bool KeyDown()
+ 		return false;
+ }
+ 
+-
+-
+-        
+-
+-
+ // Main function - Initializes the minimal client and starts the ROS2 node
+ int main(int argc, char *argv[])
+ {
+@@ -355,4 +457,4 @@ int main(int argc, char *argv[])
+ 	rclcpp::spin(std::make_shared<DexHandManus>());
+ 	rclcpp::shutdown();
+ 	return 0;
+-}
++}
+\ No newline at end of file

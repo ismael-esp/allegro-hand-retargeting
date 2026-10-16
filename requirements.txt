@@ -1,9 +1,9 @@
 torch
 torchvision
 torchaudio
-numpy
+numpy<2           # SAPIEN 2.2.2 is built against NumPy 1.x (segfaults with 2.x)
 scipy
-sapien
+sapien==2.2.2   # geort/env/hand.py uses the SAPIEN 2 API (3.x fails at scene creation)
 gym
 tqdm
 open3d

@@ -183,7 +183,7 @@ class GeoRTTrainer:
             fk_optim = optim.Adam(fk_model.parameters(), lr=5e-4)
 
             criterion_fk = nn.MSELoss()
-            for epoch in range(200):
+            for epoch in range(400):
                 all_fk_error = 0
                 for batch_idx, batch in enumerate(fk_dataloader):
                     keypoint = batch["keypoint"].cuda().float()
@@ -218,7 +218,7 @@ class GeoRTTrainer:
 
         # Workspace.
         exp_tag = kwargs.get("tag", "")
-        n_epoch = kwargs.get("epoch", 200)
+        n_epoch = kwargs.get("epoch", 400) #200
         hand_model_name = self.config["name"]
 
         w_chamfer = kwargs.get("w_chamfer", 80.0)

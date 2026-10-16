@@ -1,1 +1,19 @@
 *.pyc
+
+# --- local build / scratch ---
+geort.egg-info/
+__pycache__/
+geort/mocap/build/
+geort/mocap/install/
+geort/mocap/log/
+geort/mocap/back_codes/
+geort/config/backs/
+run_finger_mapping.sh
+
+# --- checkpoints: keep config.json + last.pth of each run, not every epoch ---
+checkpoint/**/epoch_*.pth
+
+# --- recordings and generated FK datasets: shipped as a release asset (scripts/download_data.sh) ---
+data/manus_*.npy
+data/right_v1.npy
+data/allegro_*.npz

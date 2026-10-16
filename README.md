@@ -1,186 +1,224 @@
-# Geometric Retargeting
+# Allegro Hand Retargeting: Manus Gloves → Two Allegro Hands
 
-[![CC BY-NC 4.0 License](https://licensebuttons.net/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)
+**Real-time human-to-robot hand retargeting for a bimanual robot.** Two Manus gloves track the operator's
+hands, a learned retargeting network ([GeoRT](https://github.com/facebookresearch/GeoRT), Meta / UC Berkeley)
+maps each hand's 21 keypoints to the 16 joints of an Allegro Hand V4, and a ROS 2 bridge streams the result to
+the left and right Allegro hands of a dual-arm UR3 / UR3e torso. A rule-based baseline
+(glove → DexHand gesture model → joint-index map → Allegro) is included for comparison.
 
-Welcome! This repository contains the code for the paper "Geometric Retargeting: A Principled, Ultrafast Neural Hand Retargeting Algorithm".
+<p align="center">
+  <img src="docs/media/retarget_right.gif" width="49%"/>
+  <img src="docs/media/retarget_left.gif" width="49%"/>
+  <br/><sub>Recorded Manus sessions replayed through the trained models. Left of each clip: your hand's keypoints.
+  Right: the Allegro joint angles the model outputs, rendered in SAPIEN.</sub>
+</p>
 
-![Demo GIF](./images/demo.gif)
+**Project page:** https://ismael-esp.github.io/allegro-hand-retargeting/
+
+This repository is a fork of [facebookresearch/GeoRT](https://github.com/facebookresearch/GeoRT) with its full
+history. Everything added for this robot is in a single commit on top, so `git show HEAD --stat` lists exactly what
+changed. The original README is kept in [docs/GeoRT_README.md](docs/GeoRT_README.md). GeoRT is licensed
+**CC BY-NC 4.0** (non-commercial), and so is this fork.
+
+Related: [dual-arm-allegro-ros2](https://github.com/ismael-esp/dual-arm-allegro-ros2) (the robot drivers these
+commands go to) · [dexterous-pick-and-place](https://github.com/ismael-esp/dexterous-pick-and-place) ·
+[foundationpose-ros2-tracker](https://github.com/ismael-esp/foundationpose-ros2-tracker).
+
+---
+
+## Contents
+
+- [What was added to GeoRT](#what-was-added-to-geort)
+- [Pipeline](#pipeline)
+- [Results](#results)
+- [Installation](#installation)
+- [Usage](#usage): record, train, evaluate, teleoperate
+- [Rule-based baseline](#rule-based-baseline)
+- [Troubleshooting](#troubleshooting)
+- [License and credits](#license-and-credits)
+
+## What was added to GeoRT
+
+| Area | Change |
+|---|---|
+| **Left hand** | Mirrored Allegro URDF (`assets/allegro_left/`), `geort/config/allegro_left.json` with per-joint `joint_sign` / `joint_offset`, applied in `geort/env/hand.py` before clipping and joint reordering. Left and right are trained as separate models. |
+| **Manus gloves, both hands** | ROS 2 C++ clients for the left and right glove (`geort/mocap/manus_client/src/{right_hand_ros,left_hand_ros_v2}.cpp`), and a left-hand keypoint FK node (`manus_mocap_core_left.py`, ZMQ :8766) next to the right one (:8765). |
+| **Recording** | `geort/mocap/manus_recorder.py` records a session to `data/<name>.npy` (N × 21 × 3 keypoints in the wrist frame). |
+| **Dual-hand runtime** | `geort/mocap/geort_streamer_dual.py` runs both models and publishes `{"hand","qpos"}` on ZMQ :7777 / :7778. `geort/mocap/ros_joint_bridge_dual.py` turns that into `sensor_msgs/JointState` for both Allegro drivers (rate-limited, optional clamping). `scripts/run_dual_teleop.sh` starts the whole chain. |
+| **Training** | 400 epochs for the retargeting and FK networks (upstream: 200). |
+| **Trained models** | `checkpoint/*/last.pth` + `config.json` for every run (right `right_v1`, left `left_v2` / `left_v3`, plus earlier ones). FK models for both hands. |
+| **Evaluation & media** | `scripts/eval_flexion_correlation.py` (per-finger agreement), and `scripts/media/` to render replays like the GIFs above. |
+| **Dependencies** | `requirements.txt` pins `sapien==2.2.2` and `numpy<2`. Upstream leaves SAPIEN unpinned, and SAPIEN 3.x breaks `geort/env/hand.py`. |
+| **Baseline** | `baseline_rule_based/`: the `dex2all` ROS 2 package, a patch for `dexhand_manus` and the pinned upstream packages. |
+
+## Pipeline
+
+```mermaid
+flowchart LR
+  G1["Manus glove (right)"] --> C1["manus_right<br/>(ROS 2, Manus SDK)"]
+  G2["Manus glove (left)"] --> C2["manus_left<br/>(ROS 2, Manus SDK)"]
+  C1 -- "/x,y,z_manus_rotations<br/>/manus_quats" --> F1["manus_mocap_core.py<br/>FK → 21 keypoints"]
+  C2 -- "/lh_* topics" --> F2["manus_mocap_core_left.py<br/>FK → 21 keypoints"]
+  F1 -- "ZMQ :8765" --> S["geort_streamer_dual.py<br/>GeoRT right + left models"]
+  F2 -- "ZMQ :8766" --> S
+  S -- "ZMQ :7777 (right)<br/>ZMQ :7778 (left)" --> B["ros_joint_bridge_dual.py"]
+  B -- "/ra_/allegroHand_0/joint_cmd" --> R["right Allegro V4"]
+  B -- "/la_/allegroHand_1/joint_cmd" --> L["left Allegro V4"]
+```
+
+- Keypoints are expressed in a canonical wrist frame: z from the wrist to the middle MCP, and y across the knuckles.
+  So the model only sees finger articulation, not where the hand is in space. The arms are driven separately, for
+  example by the teleop or policy stack of the robot.
+- GeoRT is trained without paired data. It matches fingertip directions and the fingertip point-cloud geometry
+  between the human hand and the robot hand (losses: direction, Chamfer, curvature, pinch). Training takes a few
+  minutes on a single GPU, and one `model.forward()` takes about 0.7 ms per hand (measured, RTX 5070 Ti).
+- The Allegro `joint_cmd` topics are the ones served by the Wonik Allegro driver in
+  [dual-arm-allegro-ros2](https://github.com/ismael-esp/dual-arm-allegro-ros2) (`start_robots.launch.py`).
+
+## Results
+
+Per-finger flexion agreement over the recorded sessions (`scripts/eval_flexion_correlation.py`). Human flexion is the
+sum of the bend angles along each finger's keypoint chain, and Allegro flexion is the sum of that finger's three
+flexion joints.
+
+| Finger | Right hand (`right_v1`, 3,390 frames) | Left hand (`left_v2`, 4,194 frames) |
+|---|---|---|
+| thumb | **0.96** | 0.87 |
+| index | **0.96** | 0.93 |
+| middle | **0.97** | 0.96 |
+| ring | **0.97** | 0.95 |
+
+<p align="center"><img src="docs/results/flexion_correlation.png" width="100%"/></p>
+
+- The mapping is monotonic for every finger, so opening and closing the human hand opens and closes the Allegro.
+- **Dead band near full extension:** with the fingers flat (under ~0.5 rad of flexion), the Allegro index, middle
+  and ring hold about 1 rad of flexion. The model matches fingertip geometry, not joint angles, and the Allegro's
+  longer fingers reach the same fingertip direction with some bend. Above that the response is roughly linear.
+- The left thumb is the weakest (r = 0.87). The left hand uses mirrored kinematics with sign/offset corrections,
+  and the thumb has the most of them.
+- These numbers measure consistency with the operator's hand, not task success. No grasping benchmark was run
+  with glove teleoperation.
+
 ## Installation
-If you have already got a conda environment with torch, you just need these packages
-```
-pip install trimesh open3d sapien zmq
+
+Tested on Ubuntu 22.04, ROS 2 Humble (host), Python 3.11, PyTorch 2.9 + CUDA 12.8, RTX 5070 Ti.
+
+```bash
+git clone https://github.com/ismael-esp/allegro-hand-retargeting.git
+cd allegro-hand-retargeting
+
+# 1. Python environment for GeoRT (training, streaming)
+conda create -n geort python=3.11 -y && conda activate geort
+pip install torch --index-url https://download.pytorch.org/whl/cu128      # or the build for your CUDA
+pip install -r requirements.txt                                          # sapien==2.2.2, numpy<2, ...
 pip install -e .
+
+# 2. Recorded sessions (optional: only needed for evaluation or to retrain on my data)
+bash scripts/download_data.sh                                            # → data/manus_*.npy, right_v1.npy
+
+# 3. Manus glove clients (ROS 2 Humble, system Python)
+#    Needs MANUS Core running and the gloves paired. The SDK libraries are already in manus_client/lib.
+sudo apt install libc-ares2 libprotobuf-dev protobuf-compiler libgrpc++1
+cd geort/mocap && source /opt/ros/humble/setup.bash && colcon build && cd -
 ```
 
-Otherwise, we recommend using a virtual environment to install the required packages. To install the required packages, run the following command:
-```
-conda create --name geort python=3.8
-pip install -r requirements.txt
-pip install -e .
-```
-## Quick Overview
-Upon completion, you will be able to train GeoRT and deploy the checkpoint in a clean and straightforward way. 
-### Training (1-2min):
-```
-python ./geort/trainer.py -hand allegro_right -human_data human_alex -ckpt_tag geort_1
-```
-### Deploy in code
-```
-import geort
-model = geort.load_model('geort_1')
-mocap = ...
-qpos = model.forward(mocap.get())
-```
-But before this, we need to complete some one-time system setup steps outlined below.
+Check it:
 
-**Useful Links**: [Notes and Troubleshooting](#notes-and-troubleshooting)
-## Getting Started
-We use the native Allegro Hand as an example. 
-
-### Step 1: Import your robot hand (one-time setup).
-Note: For the Allegro Hand, you can actually skip this step. However, please follow it if you want to import a customized robot hand.
-
-We just need to complete a quick setup process outlined below:
-
-1. Place your robot hand URDF file in the ``assets`` folder. (We have included the Allegro example there.)
-2. Create a config file named ``your_robot_name.json`` in the ``geort/config`` directory. Below is an example for the Allegro hand. For brevity, the details are omitted here, but you can refer to the [this](./geort/config/allegro_right.json) for full information. For setup instructions, please read [this](./geort/config/template.py).
-
-```
-{
-    "name": "allegro_right",  
-    "urdf_path": "./assets/allegro_right/allegro_hand_description_right.urdf",
-    "base_link": "base_link",
-    "joint_order": [
-        "joint_0.0", "joint_1.0", "joint_2.0", "joint_3.0",
-        "joint_4.0", "joint_5.0", "joint_6.0", "joint_7.0",
-        "joint_8.0", "joint_9.0", "joint_10.0", "joint_11.0",
-        "joint_12.0", "joint_13.0", "joint_14.0", "joint_15.0"
-    ],
-    "fingertip_link": [
-        {
-            "name": "index",
-            "link": "link_4.0_tip",
-            "joint": ["joint_0.0", "joint_1.0", "joint_2.0", "joint_3.0"],
-            "center_offset": [0.0, 0.0, 0.0],
-            "human_hand_id": 8,
-        },
-        ...
-    ]
-}
-
-```
-Now, you can run this command to visualize your hand.
-```
-python geort/env/hand.py --hand [YOUR_HAND_CONFIG_NAME]
-```
-such as 
-```
-python geort/env/hand.py --hand allegro_right
-```
-<span style="color:red"> If there is any segmentation error, please simplify the collision meshes or just remove all the `<collision>` fields in your URDF. </span> See the [Notes and Troubleshooting](#notes-and-troubleshooting) section.
-
-### Step 2: Collect human hand mocap data.
-Now we need to collect some human hand data for training the retargeting model. We put an example human recording dataset in data folder. You can add your own data to that folder and here is a template python script to do this.
-
-```
-import geort
-import time
-
-# Dataset Name
-data_output_name = "human" # TODO(): Specify a name for this (e.g. your name)
-
-# Your data collection loop.
-mocap = YourAwesomeMocap() # TODO(): your mocap system.
-                           # Define a mocap.get() method.
-                           # Apologies, you still have to do this...
- 
-data = []
-
-for step in range(5000):       # collect 5000 data points.
-    hand_keypoint = mocap.get() # mocap.get() return [N, 3] numpy array.
-    data.append(hand_keypoint)
-    
-    time.sleep(0.01)            # take a short break.
-
-# finish data collection.
-geort.save_human_data(data, data_output_name)
-```
-Use ``geort.save_human_data`` API -- this can simplify your effort in specifying the path. This dataset can be reloaded later using **data_output_name**. 
-
-During the data collection process, try to 1. fully stretch each finger and explore its fingertip moving range and 2. perform pinch grasps. Ensure that your fingers feel natural and comfortable—since during teleoperation deployment, you will use these recorded gestures to control the robot! Please avoid any unnatural or strained movements.
-
-We understand that most users likely have their own mocap systems. However, for demonstration purposes, we provide a simple mocap solution based on MediaPipe. Please note, this is intended only for demo use and not for deployment; we will explain this in more detail later.
-
-```
-python ./geort/mocap/mediapipe_mocap.py --name human
-```
-to generate a dataset named ``human``. Refered to the file for instructions. When you see the pop-up window, press ``s`` to start recording and ``q`` to finish. 
-
-**Note:** Please ensure that the hand frame orientation is consistent between your motion capture system and the hand URDF (but fortunately the origin does not require any alignment and you can just set it to palm center). In our provided mocap example, we support the **right** hand using the following convention:+Y axis: from the palm center to the thumb. +Z axis: from the palm center to the middle fingertip. +X axis: palm normal (pointing out of the palm). 
-
-### Step 3: Train the Model
-Assuming you have placed ``your_robot_name.json`` in the ``geort/config`` folder as described in Step 1, and set ``data_output_name`` to ``human`` in Step 2, run the following command. TAG is the checkpoint id to use in later deployment.
-
-```
-python ./geort/trainer.py -hand your_robot_name -human_data human -ckpt_tag TAG
+```bash
+python -c "import geort, numpy as np; m = geort.load_model('right_v1'); print(m.forward(np.zeros((21,3), np.float32)).shape)"
+python scripts/eval_flexion_correlation.py        # reproduces the table above (after download_data.sh)
 ```
 
-Let it train for about 30–50 epochs (approximately 1–2 minutes). You can press Ctrl+C to stop early if you wish. 
+## Usage
 
-If this is the first time you’re training for a new hand, an additional 5 minutes will be needed to train the neural FK model — this only happens once.
-In the command above, 
+### 1. Record your hand
 
-For demo purpose, we have put ``human_alex.npy`` data in the ``data`` folder. For adapting it to a right Allegro hand, just run
+```bash
+# terminal A: glove client + keypoint FK (right hand → ZMQ :8765)
+cd geort/mocap && source install/setup.bash
+ros2 run manus_client manus_right & python3 manus_mocap_core.py
+# terminal B: record (move every finger through its full range, pinch each finger with the thumb)
+python geort/mocap/manus_recorder.py --name my_right --port 8765            # → data/my_right.npy
+```
+
+For the left hand, use `manus_left`, `manus_mocap_core_left.py` and port 8766.
+
+### 2. Train
+
+```bash
+python geort/trainer.py -hand allegro_right -human_data my_right -ckpt_tag my_right_v1
+python geort/trainer.py -hand allegro_left  -human_data my_left  -ckpt_tag my_left_v1
+```
+
+On the first run for a hand, the trainer samples the robot's fingertip workspace (cached in `data/allegro_*.npz`) and
+trains an FK network (`checkpoint/fk_model_allegro_*.pth`). From a fresh clone, 400 epochs took 280 s on one GPU.
+Checkpoints go to `checkpoint/allegro_<side>_<date>_<tag>/`, and `geort.load_model('<tag>')` finds them by substring.
+
+### 3. Evaluate
+
+```bash
+python scripts/eval_flexion_correlation.py --right data/my_right.npy:my_right_v1 --left data/my_left.npy:my_left_v1
+# replay video (two steps: retarget with SAPIEN 2, render with SAPIEN 3 in a separate env)
+python scripts/media/retarget_frames.py --data data/my_right.npy --ckpt my_right_v1 --hand allegro_right \
+       --start 0 --n 300 --stride 3 --out /tmp/right.npz
+python scripts/media/render_frames.py --npz /tmp/right.npz --out /tmp/frames_right     # needs: pip install sapien==3.0.1
+```
+
+### 4. Teleoperate both Allegro hands
+
+Bring up the hands first, with the Wonik driver from
+[dual-arm-allegro-ros2](https://github.com/ismael-esp/dual-arm-allegro-ros2). Then:
+
+```bash
+GEORT_ENV=geort ROS_DOMAIN_ID=10 bash scripts/run_dual_teleop.sh
+```
+
+This opens four terminal tabs: glove clients, keypoint FK, the GeoRT streamer (`--right_ckpt right_v1 --left_ckpt
+left_v2` by default) and the ROS 2 bridge at 60 Hz. To drive only one hand, run the streamer with
+`--hand_selc_pub right`.
+
+## Rule-based baseline
+
+The earlier pipeline maps glove data through the DexHand gesture model and a fixed joint-index table:
 
 ```
-python ./geort/trainer.py -hand allegro_right -human_data human_alex -ckpt_tag geort_1
+Manus glove → manus_ros2 (PoseArray) → dexhand_manus (patched: left + right outputs, la/ra_dex_joint_states)
+            → dex2all (DexHand joint i → Allegro joint j, velocity feed-forward, grip effort) → Allegro joint_cmd
 ```
-This will generate a checkpoint named ``geort_1``. Later you can call ``model = geort.load_model('geort_1')`` to use it in your code.
 
-### Step 4: Deploy!
-Ok, now we are all set. Use the following code to import and deploy the trained model. 
-
+```bash
+# in a ROS 2 Humble workspace <ws>, with REPO=/path/to/allegro-hand-retargeting
+cd <ws>
+vcs import src < $REPO/baseline_rule_based/baseline.repos
+git -C src/dexhand_manus apply $REPO/baseline_rule_based/patches/dexhand_manus.patch
+cp -r $REPO/baseline_rule_based/dex2all src/
+# put the MANUS Core SDK into src/manus_ros2/ext/ (see its readme), then
+colcon build && source install/setup.bash
+ros2 launch dexhand_manus simulation.launch.py      # glove → DexHand
+ros2 run dex2all ra_dext_to_all                     # DexHand → right Allegro (la_dext_to_all_v2 for the left)
 ```
-import geort
 
-checkpoint_tag = 'geort_1'          # TODO: your checkpoint name, assume it is 'TAG'
-model = geort.load_model(checkpoint_tag, epoch=50)  # set epoch=-1 to use the last model.
+Learned vs rule-based: the baseline copies joint angles one-to-one through a fixed index table. By construction it
+doesn't account for different finger lengths, the thumb's very different kinematics or the Allegro's joint limits.
+GeoRT instead matches fingertip geometry and has an explicit pinch loss. The comparison here is qualitative: both pipelines run on the same robot,
+but no side-by-side metric was recorded.
 
-mocap = YourAwesomeMocap()      # TODO: your mocap.
-robot = YourRobustRobotHand()   # TODO: your robot.
+## Troubleshooting
 
-while True:
-    qpos = model.forward(mocap.get()) # This is the retargeted qpos. 
-                                      # (Note: unnormalized joint angle)
-    robot.command(qpos)               # execute!
+| Symptom | Fix |
+|---|---|
+| `AttributeError: ... 'PhysxSceneConfig' ... default_dynamic_friction` or `no attribute 'VulkanRenderer'` | SAPIEN 3.x is installed. `pip install sapien==2.2.2 "numpy<2"`. |
+| Training segfaults at `0/100000` | NumPy 2.x with SAPIEN 2.2.2. `pip install "numpy<2"`. |
+| SAPIEN viewer fails with `ErrorExtensionNotPresent` (e.g. RTX 50-series) | SAPIEN 2's Vulkan renderer doesn't support that GPU/driver. Training and teleop don't need it. For visuals use `scripts/media/render_frames.py` (SAPIEN 3) in a separate env. |
+| `manus_client` link errors (`ares_*`, protobuf) | Missing system libraries (see Installation step 3). On Ubuntu 24.04 the bundled gRPC/protobuf versions don't match, so build on 22.04 / Humble. |
+| Left hand bends the wrong way | Check `joint_sign` / `joint_offset` in `geort/config/allegro_left.json` and retrain. |
+| Bridge runs but the hands don't move | `ROS_DOMAIN_ID` / RMW must match the robot, and the Allegro driver must be the Wonik one (`/ra_/allegroHand_0/joint_cmd`). |
 
-```
-We provide some examples in ``geort/mocap/mediapipe_evaluation.py`` and ``geort/mocap/replay_evaluation``. If you have manus glove, you can also refer to ``geort/mocap/manus_evaluation.py``. We recommend (insist) you use a glove-based mocap system instead of MediaPipe, as for vision-based mocap there is significant input distribution shift during deployment!
+## License and credits
 
-The simplest way for testing is to use the replay evaluation as below. This will show the retargeted trajectory in the viewer. 
-```
-python ./geort/mocap/replay_evaluation.py -hand allegro_right -ckpt_tag YOUR_CKPT -data YOUR_TRAINING_DATA
-```
-For instance, if we have ``human.npy`` in the ``data`` folder
-```
-python ./geort/mocap/replay_evaluation.py -hand allegro_right -ckpt_tag YOUR_CKPT -data human
-```
-## Contributing
-Feel free to contribute your robot model and mocap system to the GeoRT repository!
-
-## [Notes and Troubleshooting](#notes-and-troubleshooting)
-1. **Note:Joint Range Clipping.** One core assumption of GeoRT is that the motion range of robot fingertips resembles that of human hands. To maintain realistic fingertip poses, please clip your robot's joint movement ranges appropriately and avoid unnatural configurations.
-
-2. **Simulation Errors with New Hands?** Simulation errors (segmentation fault) may occur when importing new robotic hands (e.g. [this issue](https://github.com/facebookresearch/GeoRT/issues/7)), and this is usually caused by collision meshes. To avoid this, ensure that the collision meshes defined in your URDF are simple—such as boxes or basic convex shapes. Alternatively, you can remove all <collision> elements from the URDF to eliminate these issues entirely. 
-
-3. **Hand Coordinate System (Frame) Convention** Please ensure that the hand frame orientation is consistent between your motion capture system and the hand URDF (but fortunately the origin does not require any alignment and you can just set it to palm center). In our provided mocap example, we support the **right** hand using the following convention:+Y axis: from the palm center to the thumb. +Z axis: from the palm center to the middle fingertip. +X axis: palm normal (pointing out of the palm). 
-
-
-## Contact Us
-For any inquiries, please open an issue or contact the authors via email at ``zhaohengyin@cs.berkeley.edu``
-<!-- ## Bibliography -->
-
-## License
-CC-by-NC license
-
-
+- **GeoRT** © UC Berkeley and Meta Platforms, Inc. and affiliates. CC BY-NC 4.0 ([LICENSE](LICENSE)). Paper:
+  *Geometric Retargeting: A Principled, Ultrafast Neural Hand Retargeting Algorithm* (Zhaoheng Yin et al.).
+- Additions in this fork © 2026 Ismael Espinoza, released under the same CC BY-NC 4.0 terms.
+- MANUS SDK libraries in `geort/mocap/manus_client/lib` are © MANUS (as shipped by upstream GeoRT).
+- Baseline dependencies: [iotdesignshop](https://github.com/iotdesignshop) `manus_ros2`, `dexhand_manus`,
+  `dexhand_manus_gui`, `dexhand_description` (fetched, not redistributed). The `dexhand_manus` change ships as a patch.

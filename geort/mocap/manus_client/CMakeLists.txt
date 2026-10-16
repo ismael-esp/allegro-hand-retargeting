@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(manus_client)
-
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
 #if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 #  add_compile_options(-Wall -Wextra -Wpedantic)
 #endif()
@@ -17,7 +20,8 @@ find_package(geometry_msgs)
 include_directories(include)
 include_directories("$ENV{CONDA_PREFIX}/include")
 
-add_executable(manus_left  src/SDKMinimalClient.cpp src/ClientPlatformSpecific.cpp)
+# add_executable(manus_left src/SDKMinimalClient.cpp src/ClientPlatformSpecific.cpp)
+add_executable(manus_left src/left_hand_ros_v2.cpp src/ClientPlatformSpecific.cpp)
 add_executable(manus_right src/right_hand_ros.cpp src/ClientPlatformSpecific.cpp)
 add_executable(manus_tracker src/tracker_data_print.cpp src/ClientPlatformSpecific.cpp)
 

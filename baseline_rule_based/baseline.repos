@@ -1,0 +1,20 @@
+# Upstream packages for the rule-based baseline (Manus -> DexHand gesture model -> dex2all -> Allegro).
+#   vcs import <ws>/src < baseline.repos
+#   git -C <ws>/src/dexhand_manus apply <repo>/baseline_rule_based/patches/dexhand_manus.patch
+repositories:
+  manus_ros2:
+    type: git
+    url: https://github.com/iotdesignshop/manus_ros2.git
+    version: 1c50fdfd2866075c01a53830b706937bcd0cde9f   # + MANUS Core SDK 2.3 in ext/ (download from MANUS)
+  dexhand_manus:
+    type: git
+    url: https://github.com/iotdesignshop/dexhand_manus.git
+    version: 1ea492d97eb00dbbf202c356ecb64a076110004b   # + patches/dexhand_manus.patch (left/right outputs)
+  dexhand_manus_gui:
+    type: git
+    url: https://github.com/iotdesignshop/dexhand_manus_gui.git
+    version: 74d396fe849cd4cc792dcd9ca119301fdd72276e
+  dexhand_description:
+    type: git
+    url: https://github.com/iotdesignshop/dexhand_description.git
+    version: 211b0ea23e21215532613711c383ea6823423c0c

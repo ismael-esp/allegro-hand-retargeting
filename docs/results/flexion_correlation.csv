@@ -1,0 +1,9 @@
+hand,checkpoint,finger,frames,pearson_r
+right,right_v1,thumb,3390,0.961
+right,right_v1,index,3390,0.962
+right,right_v1,middle,3390,0.972
+right,right_v1,ring,3390,0.966
+left,left_v2,thumb,4194,0.873
+left,left_v2,index,4194,0.928
+left,left_v2,middle,4194,0.957
+left,left_v2,ring,4194,0.945
