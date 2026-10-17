@@ -222,3 +222,7 @@ but no side-by-side metric was recorded.
 - MANUS SDK libraries in `geort/mocap/manus_client/lib` are © MANUS (as shipped by upstream GeoRT).
 - Baseline dependencies: [iotdesignshop](https://github.com/iotdesignshop) `manus_ros2`, `dexhand_manus`,
   `dexhand_manus_gui`, `dexhand_description` (fetched, not redistributed). The `dexhand_manus` change ships as a patch.
+
+---
+
+The additions in this fork were developed 2025-2026 by Ismael Espinoza Jaramillo (PhD candidate, Kyung Hee University) in the lab's private workspace and published as one commit on top of the GeoRT history in Oct 2026 · [ismael-esp.github.io](https://ismael-esp.github.io) · [github.com/ismael-esp](https://github.com/ismael-esp)
