@@ -4,8 +4,8 @@
   <name>manus_client</name>
   <version>1.0.0</version>
   <description>GeoRT manus client</description>
-  <maintainer email="inespinoza@gmail.com">UC Berkeley and Meta FAIR</maintainer>
-  <license>TODO: License declaration</license>
+  <maintainer email="95500945+ismael-esp@users.noreply.github.com">Ismael Espinoza</maintainer>
+  <license>CC-BY-NC-4.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   
