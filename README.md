@@ -1,5 +1,7 @@
 # Allegro Hand Retargeting: Manus Gloves → Two Allegro Hands
 
+[![lint](https://github.com/ismael-esp/allegro-hand-retargeting/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/ismael-esp/allegro-hand-retargeting/actions/workflows/lint.yml)
+
 **Real-time human-to-robot hand retargeting for a bimanual robot.** Two Manus gloves track the operator's
 hands, a learned retargeting network ([GeoRT](https://github.com/facebookresearch/GeoRT), Meta / UC Berkeley)
 maps each hand's 21 keypoints to the 16 joints of an Allegro Hand V4, and a ROS 2 bridge streams the result to
